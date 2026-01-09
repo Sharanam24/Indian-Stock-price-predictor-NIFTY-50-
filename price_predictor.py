@@ -2,200 +2,249 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
-from datetime import timedelta
+import numpy as np
 import pytz
 import ta
 
+from datetime import timedelta
 from sklearn.svm import SVR
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 # --------------------------------------------------
-# NSE STOCK LIST
+# CONFIG
+# --------------------------------------------------
+FUTURE_MINUTES = 5
+TRAIN_WINDOW = 300
+IST = pytz.timezone("Asia/Kolkata")
+
+# --------------------------------------------------
+# NIFTY 50 STOCKS
 # --------------------------------------------------
 NSE_STOCKS = {
-    "Nestle India": "NESTLEIND.NS",
-    "BEL": "BEL.NS",
-    "Eicher Motors": "EICHERMOT.NS",
-    "Asian Paints": "ASIANPAINT.NS",
-    "UltraTech Cement": "ULTRACEMCO.NS",
-    "Tata Consumer": "TATACONSUM.NS",
-    "Hindustan Unilever": "HINDUNILVR.NS",
-    "Maruti Suzuki": "MARUTI.NS",
-    "Axis Bank": "AXISBANK.NS",
-    "Tata Steel": "TATASTEEL.NS",
-    "ICICI Bank": "ICICIBANK.NS",
-    "HDFC Life": "HDFCLIFE.NS",
-    "Titan": "TITAN.NS",
-    "Cipla": "CIPLA.NS",
-    "Sun Pharma": "SUNPHARMA.NS",
-    "SBI Life": "SBILIFE.NS",
-    "NTPC": "NTPC.NS",
-    "State Bank of India": "SBIN.NS",
-    "Hindalco": "HINDALCO.NS",
-    "Power Grid": "POWERGRID.NS",
-    "Adani Ports": "ADANIPORTS.NS",
-    "Trent": "TRENT.NS",
     "Adani Enterprises": "ADANIENT.NS",
-    "Grasim": "GRASIM.NS",
-    "Kotak Bank": "KOTAKBANK.NS",
-    "Bajaj Finserv": "BAJAJFINSV.NS",
-    "Bajaj Auto": "BAJAJ-AUTO.NS",
-    "Mahindra & Mahindra": "M&M.NS",
+    "Adani Ports": "ADANIPORTS.NS",
     "Apollo Hospitals": "APOLLOHOSP.NS",
-    "Coal India": "COALINDIA.NS",
-    "ONGC": "ONGC.NS",
-    "L&T": "LT.NS",
-    "Max Healthcare": "MAXHEALTH.NS",
-    "Tech Mahindra": "TECHM.NS",
-    "Zomato": "ZOMATO.NS",
-    "TCS": "TCS.NS",
-    "Reliance Industries": "RELIANCE.NS",
-    "Jio Financial": "JIOFIN.NS",
-    "Shriram Finance": "SHRIRAMFIN.NS",
+    "Asian Paints": "ASIANPAINT.NS",
+    "Axis Bank": "AXISBANK.NS",
+    "Bajaj Auto": "BAJAJ-AUTO.NS",
     "Bajaj Finance": "BAJFINANCE.NS",
-    "Wipro": "WIPRO.NS",
+    "Bajaj Finserv": "BAJAJFINSV.NS",
+    "Bharti Airtel": "BHARTIARTL.NS",
+    "BPCL": "BPCL.NS",
+    "Britannia": "BRITANNIA.NS",
+    "Cipla": "CIPLA.NS",
+    "Coal India": "COALINDIA.NS",
+    "Divis Labs": "DIVISLAB.NS",
+    "Dr Reddys": "DRREDDY.NS",
+    "Eicher Motors": "EICHERMOT.NS",
+    "Grasim": "GRASIM.NS",
     "HCL Tech": "HCLTECH.NS",
+    "HDFC Bank": "HDFCBANK.NS",
+    "HDFC Life": "HDFCLIFE.NS",
+    "Hero MotoCorp": "HEROMOTOCO.NS",
+    "Hindalco": "HINDALCO.NS",
+    "Hindustan Unilever": "HINDUNILVR.NS",
+    "ICICI Bank": "ICICIBANK.NS",
+    "IndusInd Bank": "INDUSINDBK.NS",
     "Infosys": "INFY.NS",
-    "HDFC Bank": "HDFCBANK.NS"
+    "ITC": "ITC.NS",
+    "JSW Steel": "JSWSTEEL.NS",
+    "Kotak Bank": "KOTAKBANK.NS",
+    "L&T": "LT.NS",
+    "Maruti Suzuki": "MARUTI.NS",
+    "NTPC": "NTPC.NS",
+    "ONGC": "ONGC.NS",
+    "Power Grid": "POWERGRID.NS",
+    "Reliance": "RELIANCE.NS",
+    "SBI Life": "SBILIFE.NS",
+    "State Bank of India": "SBIN.NS",
+    "Sun Pharma": "SUNPHARMA.NS",
+    "Tata Consumer": "TATACONSUM.NS",
+    "Tata Motors": "TATAMOTORS.NS",
+    "Tata Steel": "TATASTEEL.NS",
+    "TCS": "TCS.NS",
+    "Tech Mahindra": "TECHM.NS",
+    "Titan": "TITAN.NS",
+    "UltraTech Cement": "ULTRACEMCO.NS",
+    "UPL": "UPL.NS",
+    "Wipro": "WIPRO.NS"
 }
 
 # --------------------------------------------------
-# FETCH DATA (REAL-TIME SAFE)
+# SAFE DATA FETCH
 # --------------------------------------------------
 @st.cache_data(ttl=60)
-def fetch_stock_data(ticker):
-    data = yf.download(ticker, period="1d", interval="1m")
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-    return data
+def fetch_data(symbol):
+    try:
+        df = yf.download(
+            symbol,
+            period="5d",
+            interval="1m",
+            progress=False,
+            threads=False
+        )
 
+        if df.empty:
+            df = yf.download(
+                symbol,
+                period="1d",
+                interval="1m",
+                progress=False,
+                threads=False
+            )
+
+        if df.empty:
+            return pd.DataFrame()
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC").tz_convert(IST)
+        else:
+            df.index = df.index.tz_convert(IST)
+
+        df.reset_index(inplace=True)
+        df.rename(columns={"Datetime": "Time", "Date": "Time"}, inplace=True)
+
+        df = (
+            df.set_index("Time")
+            .between_time("09:15", "15:30")
+            .reset_index()
+        )
+
+        return df.dropna()
+
+    except Exception:
+        return pd.DataFrame()
 
 # --------------------------------------------------
-# PROCESS DATA (IST + NSE HOURS)
+# SAFE SERIES
 # --------------------------------------------------
-def process_data(data):
-    if data.empty:
-        return data
-
-    ist = pytz.timezone("Asia/Kolkata")
-    if data.index.tz is None:
-        data.index = data.index.tz_localize(ist)
-    else:
-        data.index = data.index.tz_convert(ist)
-
-    data.reset_index(inplace=True)
-    data.rename(columns={"Date": "Datetime"}, inplace=True)
-
-    data = data.set_index("Datetime").between_time("09:15", "15:30").reset_index()
-    return data
-
+def safe_series(df, col):
+    s = df[col]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0]
+    return pd.to_numeric(s, errors="coerce")
 
 # --------------------------------------------------
-# TECHNICAL INDICATORS
+# FEATURE ENGINEERING
 # --------------------------------------------------
-def add_technical_indicators(data):
-    close = data["Close"].squeeze()
-    data["SMA_20"] = ta.trend.sma_indicator(close, window=20)
-    data["EMA_20"] = ta.trend.ema_indicator(close, window=20)
-    return data
+def add_features(df):
+    df = df.copy()
+    df["Close"] = safe_series(df, "Close")
 
+    df["return"] = df["Close"].pct_change()
+
+    for lag in [1, 2, 3, 5]:
+        df[f"ret_lag_{lag}"] = df["return"].shift(lag)
+
+    df["SMA_20"] = ta.trend.sma_indicator(df["Close"], 20)
+    df["EMA_20"] = ta.trend.ema_indicator(df["Close"], 20)
+    df["RSI"] = ta.momentum.rsi(df["Close"], 14)
+
+    df["ADX"] = ta.trend.adx(df["High"], df["Low"], df["Close"], 14)
+
+    df["ATR"] = ta.volatility.average_true_range(
+        df["High"], df["Low"], df["Close"], 14
+    )
+
+    df["vol_ratio"] = df["Volume"] / df["Volume"].rolling(20).mean()
+
+    df["target"] = df["Close"].shift(-FUTURE_MINUTES)
+
+    return df.dropna()
+
+FEATURES = [
+    "ret_lag_1",
+    "ret_lag_2",
+    "ret_lag_3",
+    "ret_lag_5",
+    "SMA_20",
+    "EMA_20",
+    "RSI"
+]
 
 # --------------------------------------------------
-# PREDICT NEXT 5 MINUTES (SVR)
+# FUTURE PREDICTION
 # --------------------------------------------------
-def predict_next_5_minutes(data):
-    df = data[["Close", "SMA_20", "EMA_20"]].dropna()
+def predict_future(df):
+    train = df.iloc[-TRAIN_WINDOW:]
 
-    if len(df) < 30:
-        return None, None
+    scaler = StandardScaler()
+    X = scaler.fit_transform(train[FEATURES])
 
-    X = df[["SMA_20", "EMA_20"]].values
-    y = df["Close"].values
+    model = SVR(C=200, gamma="scale", epsilon=0.01)
+    model.fit(X, train["target"])
 
-    scaler_X = MinMaxScaler()
-    scaler_y = MinMaxScaler()
-
-    X_scaled = scaler_X.fit_transform(X)
-    y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).ravel()
-
-    model = SVR(kernel="rbf")
-    model.fit(X_scaled, y_scaled)
-
-    last_input = X_scaled[-1].reshape(1, -1)
-
-    predictions = []
-    for _ in range(5):
-        pred_scaled = model.predict(last_input)
-        pred_price = scaler_y.inverse_transform(
-            pred_scaled.reshape(-1, 1)
-        )[0][0]
-        predictions.append(pred_price)
-
-    avg_prediction = sum(predictions) / len(predictions)
-    return predictions, avg_prediction
-
+    last_row = scaler.transform(df.iloc[-1:][FEATURES])
+    return model.predict(last_row)[0]
 
 # --------------------------------------------------
 # STREAMLIT UI
 # --------------------------------------------------
 st.set_page_config(layout="wide")
-st.title("📊 Indian Stock Real-Time Predictor (NSE)")
+st.title("📊 NIFTY 50 AI Stock Predictor")
 
-st.sidebar.header("📡 Stock Selection")
-company = st.sidebar.selectbox("Select Company", list(NSE_STOCKS.keys()))
+company = st.sidebar.selectbox("Select Stock", NSE_STOCKS.keys())
 symbol = NSE_STOCKS[company]
 
-# --------------------------------------------------
-# LOAD DATA
-# --------------------------------------------------
-data = fetch_stock_data(symbol)
-data = process_data(data)
+data = fetch_data(symbol)
 
 if data.empty:
-    st.warning("⚠️ Market closed or data unavailable.")
+    st.error("❌ Data unavailable. Try another stock.")
     st.stop()
 
-data = add_technical_indicators(data)
+data = add_features(data)
+
+if len(data) < TRAIN_WINDOW:
+    st.error("❌ Not enough clean data.")
+    st.stop()
+
+future_price = predict_future(data)
+current_price = data["Close"].iloc[-1]
+
+# --------------------------------------------------
+# AUTO-ADJUSTING SIGNAL LOGIC (FIXED)
+# --------------------------------------------------
+price_change = abs(future_price - current_price)
+adx = data["ADX"].iloc[-1]
+vol_ratio = data["vol_ratio"].iloc[-1]
+atr = data["ATR"].iloc[-1]
+
+min_move = 0.4 * atr
+adx_threshold = 15 + (atr / current_price) * 50
+vol_threshold = 0.9 + (atr / current_price)
+
+score = 0
+if price_change >= min_move:
+    score += 1
+if adx >= adx_threshold:
+    score += 1
+if vol_ratio >= vol_threshold:
+    score += 1
+
+if score >= 2:
+    if future_price > current_price:
+        signal = "BUY"
+    elif future_price < current_price:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
+else:
+    signal = "NO TRADE"
 
 # --------------------------------------------------
 # METRICS
 # --------------------------------------------------
-last_price = float(data["Close"].iloc[-1])
-open_price = float(data["Close"].iloc[0])
-change = last_price - open_price
-pct = (change / open_price) * 100
-
-predictions, avg_predicted_price = predict_next_5_minutes(data)
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "Current Price",
-    f"₹ {last_price:.2f}",
-    f"{change:.2f} ({pct:.2f}%)"
+c1, c2, c3 = st.columns(3)
+c1.metric("Current Price", f"₹ {current_price:.2f}")
+c2.metric(
+    "Predicted Price (+5 min)",
+    f"₹ {future_price:.2f}",
+    f"{future_price - current_price:.2f}"
 )
-
-if predictions:
-    col2.metric(
-        "Predicted Avg (Next 5 min)",
-        f"₹ {avg_predicted_price:.2f}",
-        f"{avg_predicted_price - last_price:.2f}"
-    )
-else:
-    col2.metric("Predicted Avg (Next 5 min)", "Not enough data")
-
-col3.metric("Stock", company)
-
-# --------------------------------------------------
-# BUY / SELL / HOLD SIGNAL
-# --------------------------------------------------
-if predictions:
-    if avg_predicted_price > last_price * 1.003:
-        st.success("📈 AI Signal: BUY")
-    elif avg_predicted_price < last_price * 0.997:
-        st.error("📉 AI Signal: SELL")
-    else:
-        st.info("⏸️ AI Signal: HOLD")
+c3.metric("AI Signal", signal)
 
 # --------------------------------------------------
 # CHART
@@ -203,7 +252,7 @@ if predictions:
 fig = go.Figure()
 
 fig.add_trace(go.Candlestick(
-    x=data["Datetime"],
+    x=data["Time"],
     open=data["Open"],
     high=data["High"],
     low=data["Low"],
@@ -211,35 +260,18 @@ fig.add_trace(go.Candlestick(
     name="Price"
 ))
 
-fig.add_trace(go.Scatter(
-    x=data["Datetime"],
-    y=data["SMA_20"],
-    name="SMA 20"
-))
+future_time = data["Time"].iloc[-1] + timedelta(minutes=FUTURE_MINUTES)
 
 fig.add_trace(go.Scatter(
-    x=data["Datetime"],
-    y=data["EMA_20"],
-    name="EMA 20"
+    x=[data["Time"].iloc[-1], future_time],
+    y=[current_price, future_price],
+    mode="lines+markers",
+    name="Predicted Move",
+    line=dict(dash="dot")
 ))
-
-# Predicted future prices
-if predictions:
-    future_times = [
-        data["Datetime"].iloc[-1] + timedelta(minutes=i)
-        for i in range(1, 6)
-    ]
-
-    fig.add_trace(go.Scatter(
-        x=future_times,
-        y=predictions,
-        mode="lines+markers",
-        name="Predicted (Next 5 min)",
-        line=dict(dash="dot")
-    ))
 
 fig.update_layout(
-    title=f"{company} – Real-Time NSE Chart",
+    title=f"{company} – Adaptive AI Prediction",
     xaxis_title="Time (IST)",
     yaxis_title="Price (₹)",
     template="plotly_dark"
@@ -247,7 +279,4 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-st.warning(
-    "⚠️ Educational purpose only. Not SEBI registered. "
-    "Do NOT use for real trading decisions."
-)
+st.warning("⚠️ Educational purpose only. Not financial advice.")
